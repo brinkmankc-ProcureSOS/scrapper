@@ -1,75 +1,92 @@
-import re
 import csv
-from urllib.parse import urlparse
-import requests
-from bs4 import BeautifulSoup
+import re
+import dns.resolver
 
-# Target URLs to check (replace or add actual company directory links)
-TARGET_URLS = [
-    "https://example.com/team",
-    "https://example.com/about"
-]
+def generate_permutations(first: str, last: str, domain: str) -> list[str]:
+    f = re.sub(r"[^a-zA-Z]", "", first).lower()
+    l = re.sub(r"[^a-zA-Z]", "", last).lower()
+    d = domain.strip().lower()
 
-# Keywords to filter
-KEYWORDS = ["recruiter", "talent", "hr"]
-
-EMAIL_REGEX = re.compile(r"[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+")
-IGNORE_EXTS = (".png", ".jpg", ".jpeg", ".gif", ".svg", ".webp")
-
-HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-}
-
-def scrape_url(url):
-    print(f"Scraping: {url}")
-    try:
-        res = requests.get(url, headers=HEADERS, timeout=15)
-        res.raise_for_status()
-    except Exception as e:
-        print(f"Failed to fetch {url}: {e}")
+    if not f or not l or not d:
         return []
 
-    soup = BeautifulSoup(res.text, "html.parser")
-    for tag in soup(["script", "style", "noscript"]):
-        tag.decompose()
+    return [
+        f"{f}.{l}@{d}",       # first.last
+        f"{f[0]}{l}@{d}",      # flast
+        f"{f}@{d}",            # first
+        f"{f}{l}@{d}",         # firstlast
+        f"{f}_{l}@{d}",        # first_last
+        f"{l}.{f}@{d}",        # last.first
+        f"{f[0]}.{l}@{d}"      # f.last
+    ]
 
-    text = soup.get_text(separator=" ", strip=True)
-    found_records = []
-    seen_emails = set()
+def resolve_mx(domain: str) -> tuple[bool, str]:
+    try:
+        answers = dns.resolver.resolve(domain, "MX")
+        sorted_answers = sorted(answers, key=lambda r: r.preference)
+        primary_mx = str(sorted_answers[0].exchange).rstrip(".")
+        return True, primary_mx
+    except (dns.resolver.NoAnswer, dns.resolver.NXDOMAIN, dns.resolver.LifetimeTimeout):
+        return False, "NO_MX_RECORDS"
+    except Exception as e:
+        return False, f"DNS_ERROR: {str(e)}"
 
-    for match in EMAIL_REGEX.finditer(text):
-        email = match.group(0).lower()
-        if email.endswith(IGNORE_EXTS) or email in seen_emails:
-            continue
+def run_aggregation(input_csv: str, output_csv: str):
+    print(f"Reading records from {input_csv}...")
 
-        start = max(0, match.start() - 250)
-        end = min(len(text), match.end() + 250)
-        context = text[start:end].lower()
+    mx_cache = {}
+    enriched_rows = []
 
-        matched_kws = [kw for kw in KEYWORDS if re.search(rf"\b{re.escape(kw)}\b", context)]
+    with open(input_csv, mode="r", encoding="utf-8") as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            first = row.get("first_name", "").strip()
+            last = row.get("last_name", "").strip()
+            domain = row.get("domain", "").strip()
+            title = row.get("title", "").strip()
+            company = row.get("company", "").strip()
 
-        if matched_kws or not KEYWORDS:
-            seen_emails.add(email)
-            found_records.append({
-                "source_url": url,
-                "email": email,
-                "matched_keywords": ", ".join(matched_kws) if matched_kws else "None"
+            if not domain:
+                continue
+
+            if domain not in mx_cache:
+                has_mx, mx_host = resolve_mx(domain)
+                mx_cache[domain] = (has_mx, mx_host)
+            else:
+                has_mx, mx_host = mx_cache[domain]
+
+            permutations = generate_permutations(first, last, domain) if has_mx else []
+
+            enriched_rows.append({
+                "first_name": first,
+                "last_name": last,
+                "title": title,
+                "company": company,
+                "domain": domain,
+                "mx_valid": has_mx,
+                "primary_mx": mx_host,
+                "primary_email_candidate": permutations[0] if permutations else "N/A",
+                "all_candidates": "; ".join(permutations) if permutations else "N/A"
             })
 
-    return found_records
+    fieldnames = [
+        "first_name",
+        "last_name",
+        "title",
+        "company",
+        "domain",
+        "mx_valid",
+        "primary_mx",
+        "primary_email_candidate",
+        "all_candidates"
+    ]
 
-def main():
-    all_results = []
-    for url in TARGET_URLS:
-        all_results.extend(scrape_url(url))
-
-    output_filename = "extracted_contacts.csv"
-    with open(output_filename, mode="w", newline="", encoding="utf-8") as f:
-        writer = csv.DictWriter(f, fieldnames=["source_url", "email", "matched_keywords"])
+    with open(output_csv, mode="w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
         writer.writeheader()
-        writer.writerows(all_results)
+        writer.writerows(enriched_rows)
 
-    print(f"Done. Saved {len(all_results)} leads to {output_filename}")
+    print(f"Pipeline complete. Enriched {len(enriched_rows)} records saved to {output_csv}")
 
 if __name__ == "__main__":
-    main()
+    run_aggregation("leads.csv", "aggregated_leads.csv")
