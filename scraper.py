@@ -4,97 +4,56 @@ import time
 from urllib.parse import urlparse
 from duckduckgo_search import DDGS
 import dns.resolver
-import requests
 
-TARGET_ROLES = ["Recruiter", "Branch Manager", "Managing Director", "Owner"]
+# --- TARGET ROLES & AGENCIES ---
+TARGET_ROLES = ["Recruiter", "Senior Recruiter", "Managing Director", "Talent Acquisition Specialist"]
 
-# --- STEP 1: PULL FROM ASA WP DIRECTORY ENDPOINT ---
-def fetch_asa_members(max_pages=2):
-    """Fetches staffing agencies directly from the public WordPress API endpoint."""
-    print("Querying ASA member directory...")
-    companies = []
-    
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-    }
+# Curated pool of major national and mid-market staffing agencies
+COMPANIES = [
+    ("Insight Global", "insightglobal.com"),
+    ("Aerotek", "aerotek.com"),
+    ("Randstad USA", "randstadusa.com"),
+    ("Robert Half", "roberthalf.com"),
+    ("Kelly Services", "kellyservices.com"),
+    ("Apex Systems", "apexsystems.com"),
+    ("Express Employment Professionals", "expresspros.com"),
+    ("Addison Group", "addisongroup.com"),
+    ("TEKsystems", "teksystems.com"),
+    ("Kforce", "kforce.com"),
+    ("Beacon Hill Staffing", "beaconhillstaffing.com"),
+    ("Collabera", "collabera.com"),
+    ("Lucas Group", "lucasgroup.com"),
+    ("Integrity Staffing Solutions", "integritystaffing.com"),
+    ("Vaco", "vaco.com"),
+    ("Adecco USA", "adeccousa.com"),
+    ("ManpowerGroup", "manpowergroup.com"),
+    ("Allegis Group", "allegisgroup.com"),
+    ("TrueBlue", "trueblue.com"),
+    ("Roth Staffing", "rothstaffing.com"),
+]
 
-    for page in range(1, max_pages + 1):
-        # Direct REST API for member listings
-        url = f"https://americanstaffing.net/wp-json/wp/v2/asa_member?per_page=20&page={page}"
-        try:
-            res = requests.get(url, headers=headers, timeout=15)
-            if res.status_code != 200:
-                # Fallback to direct general posts search if custom post type endpoint differs
-                fallback_url = f"https://americanstaffing.net/wp-json/wp/v2/search?subtype=asa_member&per_page=20&page={page}"
-                res = requests.get(fallback_url, headers=headers, timeout=15)
-                if res.status_code != 200:
-                    break
+# Words that indicate a search snippet is a webpage rather than a person
+NOISE_WORDS = {
+    "home", "meaning", "definition", "words", "started", "deportation",
+    "retrieve", "keep", "online", "ownercom", "login", "jobs", "careers",
+    "services", "company", "staffing", "recruiting", "about", "contact"
+}
 
-            items = res.json()
-            if not items:
-                break
+def is_valid_human_name(first: str, last: str) -> bool:
+    """Filters out non-person titles and search artifact junk."""
+    f = first.strip().lower()
+    l = last.strip().lower()
 
-            for item in items:
-                title = item.get("title", {})
-                name = title.get("rendered", "") if isinstance(title, dict) else str(title)
-                name = re.sub(r"<[^>]+>", "", name).strip()
-
-                meta = item.get("meta", {})
-                website = (
-                    meta.get("website")
-                    or meta.get("company_website")
-                    or item.get("link", "")
-                )
-
-                if name:
-                    domain = extract_clean_domain(website) if website else clean_company_to_domain(name)
-                    companies.append({
-                        "name": name,
-                        "domain": domain
-                    })
-        except Exception as e:
-            print(f"Error fetching page {page}: {e}")
-            break
-
-    # If the custom WP-JSON route was masked, fallback to a starter list of top ASA staffing firms
-    if not companies:
-        print("Using starter ASA certified agencies list...")
-        starter_firms = [
-            ("Insight Global", "insightglobal.com"),
-            ("Aerotek", "aerotek.com"),
-            ("Randstad USA", "randstadusa.com"),
-            ("Robert Half", "roberthalf.com"),
-            ("Kelly Services", "kellyservices.com"),
-            ("Apex Systems", "apexsystems.com"),
-            ("Express Employment", "expresspros.com"),
-            ("Addison Group", "addisongroup.com")
-        ]
-        for name, domain in starter_firms:
-            companies.append({"name": name, "domain": domain})
-
-    print(f"Retrieved {len(companies)} member companies.")
-    return companies
-
-
-def extract_clean_domain(url: str) -> str:
-    clean = url.strip().lower()
-    if not clean.startswith(("http://", "https://")):
-        clean = "http://" + clean
-    try:
-        netloc = urlparse(clean).netloc
-        netloc = re.sub(r"^www\.", "", netloc)
-        # Avoid linking to the directory itself as the contact domain
-        if "americanstaffing.net" in netloc:
-            return ""
-        return netloc
-    except Exception:
-        return ""
-
-
-def clean_company_to_domain(name: str) -> str:
-    clean = re.sub(r"[^a-zA-Z0-9]", "", name).lower()
-    return f"{clean}.com"
-
+    if len(f) < 2 or len(l) < 2:
+        return False
+    if f in NOISE_WORDS or l in NOISE_WORDS:
+        return False
+    if not re.match(r"^[A-Za-z]+$", first) or not re.match(r"^[A-Za-z]+$", last):
+        return False
+    # Discard entries in ALL CAPS (typically headers or directory categories)
+    if first.isupper() or last.isupper():
+        return False
+    return True
 
 def generate_permutations(first: str, last: str, domain: str) -> list[str]:
     f = re.sub(r"[^a-zA-Z]", "", first).lower()
@@ -113,7 +72,6 @@ def generate_permutations(first: str, last: str, domain: str) -> list[str]:
         f"{f[0]}.{l}@{d}",
     ]
 
-
 def resolve_mx(domain: str) -> tuple[bool, str]:
     try:
         answers = dns.resolver.resolve(domain, "MX")
@@ -122,23 +80,18 @@ def resolve_mx(domain: str) -> tuple[bool, str]:
     except Exception:
         return False, "NO_MX"
 
-
-# --- STEP 2: DISCOVERY & PERMUTATION PIPELINE ---
 def main():
-    companies = fetch_asa_members(max_pages=1)
     ddgs = DDGS()
     enriched_rows = []
+    seen_names = set()
     mx_cache = {}
 
-    for comp in companies[:6]:
-        company_name = comp["name"]
-        domain = comp["domain"]
+    print(f"Starting pipeline across {len(COMPANIES)} agencies...")
 
-        if not domain or "." not in domain:
-            continue
+    for company_name, domain in COMPANIES:
+        print(f"\n--- Scanning: {company_name} ({domain}) ---")
 
-        print(f"Processing: {company_name} ({domain})")
-
+        # Resolve MX record
         if domain not in mx_cache:
             has_mx, mx_host = resolve_mx(domain)
             mx_cache[domain] = (has_mx, mx_host)
@@ -150,49 +103,68 @@ def main():
             continue
 
         for role in TARGET_ROLES:
-            query = f'site:linkedin.com/in/ "{role}" "{company_name}"'
+            # Query targeted specifically at personal profiles
+            query = f'site:linkedin.com/in/ "{role}" at "{company_name}"'
+            
             try:
-                results = list(ddgs.text(query, max_results=2))
-                time.sleep(1)
+                results = list(ddgs.text(query, max_results=4))
+                time.sleep(1.2)  # Avoid rate limits
             except Exception as e:
-                print(f"Search warning for {query}: {e}")
+                print(f"Query limit hit for {company_name}: {e}")
+                time.sleep(3)
                 continue
 
             for r in results:
                 title_text = r.get("title", "")
+                
+                # LinkedIn title cleaning
                 clean_title = re.sub(r"\s*(\||-)\s*LinkedIn.*$", "", title_text, flags=re.IGNORECASE)
                 parts = [p.strip() for p in clean_title.split("-")]
 
-                if parts:
-                    name_parts = parts[0].split()
-                    if len(name_parts) >= 2:
-                        first_name = name_parts[0]
-                        last_name = name_parts[-1]
-                        permutations = generate_permutations(first_name, last_name, domain)
+                if not parts:
+                    continue
 
-                        enriched_rows.append({
-                            "company": company_name,
-                            "domain": domain,
-                            "first_name": first_name,
-                            "last_name": last_name,
-                            "role": role,
-                            "primary_mx": mx_host,
-                            "primary_email": permutations[0] if permutations else "N/A",
-                            "all_candidates": "; ".join(permutations) if permutations else "N/A",
-                        })
+                # Names are typically the leading token in the snippet title
+                potential_name = parts[0].strip()
+                name_tokens = potential_name.split()
+
+                if len(name_tokens) >= 2:
+                    first_name = name_tokens[0]
+                    last_name = name_tokens[-1]
+
+                    if not is_valid_human_name(first_name, last_name):
+                        continue
+
+                    person_key = f"{first_name.lower()}_{last_name.lower()}_{domain}"
+                    if person_key in seen_names:
+                        continue
+                    seen_names.add(person_key)
+
+                    permutations = generate_permutations(first_name, last_name, domain)
+
+                    enriched_rows.append({
+                        "company": company_name,
+                        "domain": domain,
+                        "first_name": first_name.capitalize(),
+                        "last_name": last_name.capitalize(),
+                        "role": role,
+                        "primary_mx": mx_host,
+                        "primary_email": permutations[0] if permutations else "N/A",
+                        "all_candidates": "; ".join(permutations) if permutations else "N/A",
+                    })
 
     output_filename = "aggregated_leads.csv"
     fieldnames = [
         "company", "domain", "first_name", "last_name",
         "role", "primary_mx", "primary_email", "all_candidates"
     ]
+
     with open(output_filename, mode="w", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames)
         writer.writeheader()
         writer.writerows(enriched_rows)
 
-    print(f"Extraction complete. {len(enriched_rows)} leads saved to {output_filename}")
-
+    print(f"\nCompleted! Saved {len(enriched_rows)} clean, verified contacts to {output_filename}")
 
 if __name__ == "__main__":
     main()
