@@ -26,12 +26,12 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Run scraper
+      - name: Run Aggregator Pipeline
         run: python scraper.py
 
       - name: Commit and push results
         run: |
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
-          git add extracted_contacts.csv
-          git diff --quiet && git diff --staged --quiet || (git commit -m "Update extracted contacts [skip ci]" && git push)
+          git add aggregated_leads.csv
+          git diff --quiet && git diff --staged --quiet || (git commit -m "Update aggregated leads [skip ci]" && git push)
