@@ -1,4 +1,1 @@
 first_name,last_name,title,company,domain,mx_valid,primary_mx,primary_email_candidate,all_candidates
-Satya,Nadella,CEO,Microsoft,microsoft.com,True,microsoft-com.mail.protection.outlook.com,satya.nadella@microsoft.com,satya.nadella@microsoft.com; snadella@microsoft.com; satya@microsoft.com; satyanadella@microsoft.com; satya_nadella@microsoft.com; nadella.satya@microsoft.com; s.nadella@microsoft.com
-Sundar,Pichai,CEO,Alphabet,google.com,True,smtp.google.com,sundar.pichai@google.com,sundar.pichai@google.com; spichai@google.com; sundar@google.com; sundarpichai@google.com; sundar_pichai@google.com; pichai.sundar@google.com; s.pichai@google.com
-Jane,Doe,VP Engineering,Acme Corp,example.com,True,,jane.doe@example.com,jane.doe@example.com; jdoe@example.com; jane@example.com; janedoe@example.com; jane_doe@example.com; doe.jane@example.com; j.doe@example.com
